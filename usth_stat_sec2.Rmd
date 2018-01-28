@@ -1,0 +1,386 @@
+---
+title: "Data Analysis Course at USTH (Section: Statistics, Part 2)"
+subtitle: "Biostatistics"
+author: "Nguyen Chi Dung"
+output:
+  tufte::tufte_html: default
+  tufte::tufte_handout:
+    citation_package: natbib
+    latex_engine: xelatex
+  tufte::tufte_book:
+    citation_package: natbib
+    latex_engine: xelatex
+bibliography: skeleton.bib
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+library(tufte)
+# invalidate cache when the tufte version changes
+knitr::opts_chunk$set(tidy = FALSE, cache.extra = packageVersion('tufte'), warning = FALSE, message = FALSE)
+options(htmltools.dir.version = FALSE)
+```
+
+
+```{r}
+
+
+#=====================================================
+#                Simple Regression
+#=====================================================
+
+rm(list = ls())
+path <- dir("F:/usth/data", full.names = TRUE)
+pima_small <- read.csv(path[4])
+
+# Perform OLS Regression: 
+library(magrittr)
+library(tidyverse)
+
+set.seed(1)
+train <- pima_small %>% sample_n(300)
+test <- dplyr::setdiff(pima_small, train)
+
+ols1 <- train %>% lm(glucose ~ bmi, data = .)
+
+#---------------------------------------
+#  1. Extract insights from lm object
+#---------------------------------------
+
+# OLS results: 
+ols1 %>% summary()
+
+# Extract Coefficients:  
+ols1$coefficients
+
+# Extract Residuals: 
+res <- ols1$residuals
+res %>% head()
+
+# Extract fitted values: 
+fit_val <- ols1$fitted.values
+fit_val %>% head()
+
+# Use for prediction: 
+pred <- predict(ols1, test)
+pred %>% head() # Predicted values
+test$glucose %>% head() # Actual values
+
+# Regression line: 
+theme_set(theme_minimal())
+
+train %>% 
+  ggplot(aes(bmi, glucose)) + 
+  geom_point(alpha = 0.3) + 
+  geom_smooth(method = "lm") + 
+  labs(x = NULL, y = NULL, 
+       title = "The Relationship between Glucose and BMI", 
+       caption = "Data Source: The National Institute of Diabetes and Digestive and Kidney Diseases")
+
+
+#---------------------------------------
+#           2. Diagnostics
+#---------------------------------------
+
+# Use graphs: 
+library(ggfortify)
+autoplot(ols1, which = 1:6, label.size = 2)
+
+#----------------------------------------
+#     are error normally distributed?
+#----------------------------------------
+# Q-Q plot (method 1): 
+autoplot(ols1, which = 2, label.size = 2)
+
+# Histogram (method 2): 
+train <- train %>% mutate(resd = ols1$residuals)
+
+train %>% 
+  ggplot(aes(resd)) + 
+  geom_density(fill = "red", color = "red", alpha = 0.4) + 
+  geom_histogram(aes(y = ..density..), fill = "blue", color = "blue", alpha = 0.4) + 
+  geom_vline(xintercept = mean(train$resd), color = "yellow")
+
+# Use an official test (https://en.wikipedia.org/wiki/Shapiro%E2%80%93Wilk_test): 
+shapiro.test(train$resd) 
+
+
+#-----------------------------------------
+#    Remedies for Assumption Violations 
+#-----------------------------------------
+
+# Use Tukey’s method (SPSS uses this method for handling outliers): 
+ct <- mean(train$resd) + 2*sd(train$resd)
+cd <- mean(train$resd) - 2*sd(train$resd)
+
+train <- train %>% mutate(out = case_when(resd > ct ~ "Outlier",
+                                          resd < cd ~ "Outlier", 
+                                          resd <= ct & resd >= cd ~ "Normal"))
+
+ols_re1 <- train %>% 
+  filter(out == "Normal") %>% 
+  lm(glucose ~ bmi, data = .)
+
+ols_re1 %>% summary()
+ols1 %>% summary()
+
+u <- ols_re1 %>% summary()
+u$r.squared
+
+v <- ols1 %>% summary()
+u$r.squared / v$r.squared - 1
+
+train %>% 
+  ggplot(aes(bmi, glucose)) + 
+  geom_point(data = train %>% filter(out == "Outlier"), 
+             color = "red", size = 2) + 
+  geom_smooth(method = "lm", se = FALSE) + 
+  geom_point(data = train %>% filter(out != "Outlier"), 
+             color = "purple", alpha = 0.3) + 
+  geom_smooth(data = train %>% filter(out != "Outlier"), 
+              method = "lm", se = FALSE, color = "green")
+
+# Use Cook's Distance (https://en.wikipedia.org/wiki/Cook%27s_distance): 
+
+cut_off <- 1 / nrow(train)
+
+train %<>% mutate(d = cooks.distance(ols1),  
+                  out_d = case_when(d > cut_off ~ "Outlier", 
+                                    d <= cut_off ~ "Normal"))
+
+train %>% 
+  filter(out_d == "Outlier") %>% 
+  head()
+
+ols3 <- train %>% 
+  filter(out_d != "Outlier") %>%
+  lm(glucose ~ bmi, data = .)
+
+ols3 %>% summary()
+
+autoplot(ols1, which = 4, ncol = 3, label.size = 1) # Method 1
+
+
+train <- train  %>%  
+  mutate(N = 1:nrow(.))
+
+train %>% 
+  ggplot(aes(N, d)) +
+  geom_point(alpha = 0.2) + 
+  geom_point(data = train %>% filter(d > cut_off), color = "red") + 
+  labs(x = NULL, y = "Cook's  Distance", 
+       title = "Outliers based on Cook's Distance") # Method 2. 
+
+# Use data transformation: 
+
+train %<>% mutate(ln_bmi = log(bmi))
+ols4 <- train %>% lm(glucose ~ ln_bmi, data = .)
+ols4 %>% summary()
+
+
+#---------------------------------------
+#         3. Boostrap Method
+#---------------------------------------
+
+# Method 1: 
+
+pima_small <- read.csv(path[4])
+train <- pima_small %>% sample_n(300)
+test <- dplyr::setdiff(pima_small, train)
+ols1 <- train %>% lm(glucose ~ bmi, data = .)
+ols1 %>% summary()
+coef <- ols1$coefficients
+coef[1]
+coef[2]
+
+
+a <- c()
+b <- c()
+for (i in 1:1000) {
+  set.seed(i)
+  train <- pima_small %>% sample_n(nrow(.), replace = TRUE)
+  ols1 <- train %>% lm(glucose ~ bmi, data = .)
+  ols1 %>% summary()
+  coef <- ols1$coefficients
+  m <- coef[1]
+  n <- coef[2]
+  a <- c(a, m)
+  b <- c(b, n)
+}
+
+
+my_bo <- data.frame(Intercept = a, Coeff = b)
+my_bo %>% 
+  gather(kieu_hs, giatri) %>% 
+  ggplot(aes(giatri)) + 
+  geom_density(fill = "red", color = "red", alpha = 0.4) + 
+  geom_histogram(aes(y = ..density..), fill = "blue", color = "blue", alpha = 0.4) + 
+  facet_wrap(~ kieu_hs, scales = "free") + 
+  labs(x = NULL,  y = NULL, 
+       title = "Coefficients from 1000 bootstrap sampling", 
+       subtitle = "Note: Use our function (Method 1)", 
+       caption = "Data Sourse: NIDDKD")
+
+my_bo %>% summary()
+
+# Use Shapiro test for checking normality: 
+shapiro.test(my_bo$Coeff)
+
+# Calculate 95% Confidence Interval for Coeff 
+# (https://www.mathsisfun.com/data/confidence-interval.html): 
+
+tinh_95_in <- function(x) {
+  ct <- mean(x) + 1.96*sd(x) / sqrt(length(x))
+  cd <- mean(x) - 1.96*sd(x) / sqrt(length(x))
+  print(paste("Lower bound:", round(cd, 3)))
+  print(paste("Upper bound:", round(ct, 3)))
+}
+
+tinh_95_in(my_bo$Coeff)
+
+
+# Method 2: 
+library(broom)
+
+set.seed(1)
+boot1000 <- pima_small %>% 
+  bootstrap(1000) %>% 
+  do(tidy(lm(.$glucose ~ .$bmi, trace = F)))
+
+boot1000 %<>% ungroup()
+boot1000 %>% head()
+
+boot1000 %>% 
+  ggplot(aes(estimate)) + 
+  geom_density(fill = "red", color = "red", alpha = 0.4) + 
+  geom_histogram(aes(y = ..density..), fill = "blue", color = "blue", alpha = 0.4) + 
+  facet_wrap(~ term, scales = "free") + 
+  labs(x = NULL,  y = NULL, 
+       title = "Coefficients from 1000 bootstrap sampling", 
+       subtitle = "Note: Use broom package (Method 2)", 
+       caption = "Data Sourse: NIDDKD")
+
+
+# 95% Confidence Interval for Coeff : 
+boot1000 %>% 
+  filter(term == ".$bmi") %>% 
+  pull(estimate) %>% 
+  tinh_95_in()
+
+
+#--------------------------------------------
+#  4. Missing Data and  Imputation Method 
+#--------------------------------------------
+
+#------------
+#  Method 1
+#------------
+
+# Load data: 
+pima <- read.csv(path[3])
+
+# Convert zero to NA and preprocessing data: 
+convert_NA <- function(x) {case_when(x == 0 ~ NA_integer_, 
+                                     x != 0 ~ x)}
+
+pima_na <- pima %>% 
+  mutate_at(.vars = c("glucose", "diastolic", "triceps", "insulin"), 
+            .funs = convert_NA)
+
+pima_na %>% head()
+
+# A function for calculating NA rate:  
+na_rate <- function(x) {
+  return(100*sum(is.na(x)) / length(x))
+}
+
+
+# Use our function: 
+pima_na %>% 
+  summarise_all(na_rate)
+
+# A function for imputing NA by mean: 
+
+imputing_by_mean <- function(x) {
+  tb <- mean(x, na.rm = TRUE)
+  x[is.na(x)] <- tb
+  return(x)
+}
+
+pima_imp <- pima_na %>% mutate_all(imputing_by_mean)
+pima_imp %>% head()
+pima_imp %>% summarise_all(na_rate)
+
+pima_na %>% 
+  lm(glucose ~ bmi, data = .) %>% 
+  summary()
+
+pima_imp %>% 
+  lm(glucose ~ bmi, data = .) %>% 
+  summary()
+
+#-------------------
+#  Method 2: 
+#-------------------
+
+library(VIM)
+
+plot_na <- aggr(pima_na, 
+                col = c("navyblue", "yellow"),
+                numbers = TRUE, 
+                sortVars = TRUE, 
+                labels = names(pima_na), 
+                cex.axis = .7, gap = 3, 
+                ylab = c("Missing Data Rate", ""))
+
+
+library(mice)
+df_impu <- mice(pima_na,
+                m = 2, 
+                method = "pmm", 
+                seed = 100)
+
+data1 <- complete(df_impu, 1) 
+data2 <- complete(df_impu, 2) 
+summary(data1)
+summary(data2)
+
+ols1 <- lm(glucose ~ bmi, data = data1)
+ols2 <- lm(glucose ~ bmi, data = data2)
+library(stargazer)
+stargazer(ols1, ols2, title = "So sánh OLS1 và OLS2", type = "text")
+
+fit <- with(data = df_impu, exp = lm(glucose ~ bmi))
+summary(fit)
+
+
+tonghop <- pool(fit)
+tonghop
+
+(ols1$coefficients[2] + ols2$coefficients[2]) / 2
+
+# Write a function for visualizing missing data: 
+
+missing_vis <- function(x){
+  x %>% 
+  is.na() %>% 
+  melt() %>% 
+  ggplot(aes(x = Var2, fill = value)) +
+  geom_bar(aes(y = ..count..), alpha = 0.5) + 
+  coord_flip() + theme_bw() + 
+  scale_fill_manual(values = c("blue", "red"), 
+                    name = NULL, 
+                    labels = c("Available", "Missing")) + 
+  labs(x = NULL, y = NULL, title = "Missing Data Rate in our Data Set")
+}
+
+
+missing_vis(pima_na)
+
+```
+
+
+```{r bib, include=FALSE}
+# create a bib file for the R packages used in this document
+knitr::write_bib(c('base', 'rmarkdown'), file = 'skeleton.bib')
+```
